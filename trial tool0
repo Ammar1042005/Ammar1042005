@@ -1,0 +1,256 @@
+import os
+import subprocess
+import shutil
+import sys
+import argparse
+import pandas as pd
+import tkinter as tk
+from tkinter import messagebox, simpledialog
+from docx import Document
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+
+def interpret_prompt(prompt):
+    target_url = ""
+    target_type = ""
+    vuln_checks = []
+    
+    words = prompt.lower().split()
+    for word in words:
+        if word.startswith("http"):
+            target_url = word
+            break
+    
+    if "web" in words:
+        target_type = "web"
+    elif "app" in words:
+        target_type = "app"
+    
+    if "sql" in words:
+        vuln_checks.append("SQL Injection")
+    if "xss" in words:
+        vuln_checks.append("Cross-Site Scripting")
+    if "csrf" in words:
+        vuln_checks.append("CSRF")
+    if "auth" in words:
+        vuln_checks.append("Broken Authentication")
+    
+    return target_url, target_type, vuln_checks
+
+def check_dependencies():
+    required_tools = {
+        "nmap": "nmap",
+        "gobuster": "gobuster",
+        "sqlmap": "sqlmap",
+        "nikto": "nikto",
+        "metasploit": "msfconsole",
+        "wpscan": "wpscan",
+        "hydra": "hydra",
+        "burpsuite": "burpsuite",
+        "openvas": "openvas",
+        "slither": "slither",
+        "mythril": "mythril",
+        "safety": "safety",
+        "auditjs": "auditjs",
+        "sublist3r": "sublist3r"
+    }
+
+    missing_tools = []
+
+    for tool, command in required_tools.items():
+        if shutil.which(command) is None:
+            missing_tools.append(tool)
+
+    if missing_tools:
+        print(f"The following tools are missing: {', '.join(missing_tools)}")
+        for tool in missing_tools:
+            response = input(f"Do you want to install {tool}? (y/n): ").strip().lower()
+            if response == "y":
+                install_tool(tool)
+            else:
+                print(f"Skipping installation of {tool}.")
+    else:
+        print("All required tools are installed.")
+
+def install_tool(tool):
+    print(f"Installing {tool}...")
+    try:
+        if sys.platform.startswith("linux"):
+            subprocess.run(["sudo", "apt", "update"], check=True)
+            subprocess.run(["sudo", "apt", "install", "-y", tool], check=True)
+        elif sys.platform == "darwin":  # macOS
+            subprocess.run(["brew", "install", tool], check=True)
+        elif sys.platform == "win32":
+            print(f"Please manually install {tool}. Refer to the official website for download instructions.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error installing {tool}: {e}")
+
+def clone_and_scan_repo(repo_url):
+    repo_name = repo_url.split('/')[-1].replace('.git', '')
+    subprocess.run(["git", "clone", repo_url], check=True)
+    print(f"Repository {repo_name} cloned successfully.")
+    
+    # Scan dependencies for vulnerabilities
+    if os.path.exists(f"{repo_name}/requirements.txt"):
+        print("Running safety check on Python dependencies...")
+        subprocess.run(["pip", "install", "safety"], check=True)
+        subprocess.run(["safety", "check", "-r", f"{repo_name}/requirements.txt"], check=True)
+    elif os.path.exists(f"{repo_name}/package.json"):
+        print("Running npm audit on JavaScript dependencies...")
+        subprocess.run(["npm", "audit", "--prefix", repo_name], check=True)
+    
+    # Run Slither and Mythril for smart contract security analysis
+    if os.path.exists(f"{repo_name}/contracts"):
+        print("Running Slither analysis on smart contracts...")
+        subprocess.run(["slither", f"{repo_name}/contracts"], check=True)
+        print("Running Mythril analysis on smart contracts...")
+        subprocess.run(["mythril", "analyze", f"{repo_name}/contracts"], check=True)
+
+def find_subdomains(target_url):
+    print(f"Finding subdomains for {target_url}...")
+    try:
+        subprocess.run(["sublist3r", "-d", target_url, "-o", f"{target_url}_subdomains.txt"], check=True)
+        with open(f"{target_url}_subdomains.txt", "r") as f:
+            subdomains = f.read()
+            print(subdomains)
+        return subdomains
+    except subprocess.CalledProcessError as e:
+        print(f"Error finding subdomains: {e}")
+        return None
+
+def find_subdirectories(target_url):
+    print(f"Finding subdirectories for {target_url}...")
+    try:
+        subprocess.run(["gobuster", "dir", "-u", target_url, "-w", "common_wordlist.txt", "-o", f"{target_url}_subdirectories.txt"], check=True)
+        with open(f"{target_url}_subdirectories.txt", "r") as f:
+            subdirectories = f.read()
+            print(subdirectories)
+        return subdirectories
+    except subprocess.CalledProcessError as e:
+        print(f"Error finding subdirectories: {e}")
+        return None
+
+def generate_report(target_url, open_ports, vulnerabilities, format):
+    safe_filename = target_url.replace("http://", "").replace("https://", "").replace("/", "_").replace(":", "_")
+    
+    if format == "txt":
+        with open(f"{safe_filename}_report.txt", "w") as f:
+            f.write(f"Report for {target_url}\n")
+            f.write(f"Open Ports: {open_ports}\n")
+            f.write("Vulnerabilities:\n")
+            for vuln in vulnerabilities:
+                f.write(f"- {vuln['type']} (Severity: {vuln['severity']})\n")
+    elif format == "pdf":
+        pdf_filename = f"{safe_filename}_report.pdf"
+        c = canvas.Canvas(pdf_filename, pagesize=letter)
+        c.drawString(100, 750, f"Report for {target_url}")
+        c.drawString(100, 730, f"Open Ports: {open_ports}")
+        y = 710
+        for vuln in vulnerabilities:
+            c.drawString(100, y, f"- {vuln['type']} (Severity: {vuln['severity']})")
+            y -= 20
+        c.save()
+    elif format == "docx":
+        doc = Document()
+        doc.add_heading(f"Report for {target_url}", level=1)
+        doc.add_paragraph(f"Open Ports: {open_ports}")
+        doc.add_heading("Vulnerabilities:", level=2)
+        for vuln in vulnerabilities:
+            doc.add_paragraph(f"- {vuln['type']} (Severity: {vuln['severity']})")
+        doc.save(f"{safe_filename}_report.docx")
+    elif format == "csv":
+        df = pd.DataFrame(vulnerabilities)
+        df.to_csv(f"{safe_filename}_report.csv", index=False)
+    print(f"Report saved in {format} format.")
+
+def interactive_shell():
+    while True:
+        print("\nWelcome to Ethical Hacking Toolkit!")
+        print("1. Scan for Open Ports")
+        print("2. Perform Vulnerability Assessment")
+        print("3. Exploit Vulnerabilities")
+        print("4. Generate Reports")
+        print("5. Erase Footprints")
+        print("6. Find Subdomains")
+        print("7. Find Subdirectories")
+        print("8. Switch to GUI")
+        print("9. Exit")
+        
+        choice = input("Choose an option: ").strip()
+        
+        if choice == "1":
+            target = input("Enter target IP/URL: ").strip()
+            print(f"Scanning {target} for open ports...")
+            # Call port scanning function here
+        elif choice == "2":
+            print("Performing vulnerability assessment...")
+            # Call vulnerability assessment function here
+        elif choice == "3":
+            print("Exploiting vulnerabilities...")
+            # Call exploitation function here
+        elif choice == "4":
+            print("Generating reports...")
+            # Call report generation function here
+        elif choice == "5":
+            print("Erasing footprints...")
+            # Call footprint erasure function here
+        elif choice == "6":
+            target = input("Enter target domain: ").strip()
+            find_subdomains(target)
+        elif choice == "7":
+            target = input("Enter target URL: ").strip()
+            find_subdirectories(target)
+        elif choice == "8":
+            start_gui()
+        elif choice == "9":
+            print("Exiting...")
+            break
+        else:
+            print("Invalid choice, please try again.")
+
+def start_gui():
+    root = tk.Tk()
+    root.title("Ethical Hacking Toolkit")
+    
+    def scan_ports():
+        target = simpledialog.askstring("Input", "Enter target IP/URL:")
+        if target:
+            messagebox.showinfo("Scan", f"Scanning {target} for open ports...")
+            # Call port scanning function here
+    
+    def find_subdomains_gui():
+        target = simpledialog.askstring("Input", "Enter target domain:")
+        if target:
+            messagebox.showinfo("Subdomains", f"Finding subdomains for {target}...")
+            find_subdomains(target)
+    
+    def find_subdirectories_gui():
+        target = simpledialog.askstring("Input", "Enter target URL:")
+        if target:
+            messagebox.showinfo("Subdirectories", f"Finding subdirectories for {target}...")
+            find_subdirectories(target)
+    
+    tk.Button(root, text="Scan for Open Ports", command=scan_ports).pack(pady=5)
+    tk.Button(root, text="Vulnerability Assessment", command=lambda: messagebox.showinfo("Info", "Performing vulnerability assessment...")) .pack(pady=5)
+    tk.Button(root, text="Exploit Vulnerabilities", command=lambda: messagebox.showinfo("Info", "Exploiting vulnerabilities...")) .pack(pady=5)
+    tk.Button(root, text="Generate Reports", command=lambda: messagebox.showinfo("Info", "Generating reports...")) .pack(pady=5)
+    tk.Button(root, text="Erase Footprints", command=lambda: messagebox.showinfo("Info", "Erasing footprints...")) .pack(pady=5)
+    tk.Button(root, text="Find Subdomains", command=find_subdomains_gui).pack(pady=5)
+    tk.Button(root, text="Find Subdirectories", command=find_subdirectories_gui).pack(pady=5)
+    tk.Button(root, text="Exit", command=root.quit).pack(pady=5)
+    
+    root.mainloop()
+
+def main():
+    check_dependencies()
+    mode = input("Choose mode: 1 for Shell, 2 for GUI: ").strip()
+    if mode == "1":
+        interactive_shell()
+    elif mode == "2":
+        start_gui()
+    else:
+        print("Invalid choice. Defaulting to Shell mode.")
+        interactive_shell()
+
+if __name__ == '__main__':
+    main()
